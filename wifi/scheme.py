@@ -1,8 +1,9 @@
 import re
 import itertools
-
+import platform
+from getpass import getpass
 import wifi.subprocess_compat as subprocess
-import wpactrl
+#import wpactrl # Not Needed?
 from wifi.pbkdf2 import pbkdf2_hex
 
 
@@ -12,6 +13,9 @@ def configuration(cell, passkey=None, username=None):
 
     Asks for a password if necessary
     """
+    if passkey == None and cell.encrypted:
+        passkey = getpass("Wifi Password: ") # Ask for Password, if not passed in passkey
+
     if not cell.encrypted:
         return
         {
@@ -20,13 +24,19 @@ def configuration(cell, passkey=None, username=None):
         }
     else:
         if (cell.encryption_type == 'wpa2-?') or (cell.encryption_type == 'wpa2-psk'):
-            if len(passkey) != 64:
+            passkey_orig = passkey
+            if passkey != None:
+                if len(passkey) != 64:
+                    passkey = pbkdf2_hex(passkey, cell.ssid, 4096, 32)
+            else:
+                
                 passkey = pbkdf2_hex(passkey, cell.ssid, 4096, 32)
-
+            
             return {
                 'wpa-ssid': cell.ssid,
                 'wpa-psk': passkey,
                 'wireless-channel': 'auto',
+                'password': passkey_orig
             }
         elif (cell.encryption_type == 'wpa2-eap'):
             return {
@@ -37,14 +47,13 @@ def configuration(cell, passkey=None, username=None):
                 'pairwise': 'CCMP TKIP',
                 'group': 'CCMP TKIP',
                 'eap': 'PEAP',
-                'phase1': '"peapver=0"'
-                'phase2': '"MSCHAPV2"'
+                'phase1': '"peapver=0"',
+                'phase2': '"MSCHAPV2"',
                 'identity': '"'+username+'"',
                 'password': '"'+passkey+'"',
             }
         else:
             raise NotImplementedError
-
 
 class Scheme(object):
     """
@@ -52,7 +61,7 @@ class Scheme(object):
     class provides a Python interface to the /etc/network/interfaces
     file.
     """
-
+    
     interfaces = '/etc/network/interfaces'
 
     def __init__(self, interface, name, options=None,encryption_type=None):
@@ -115,11 +124,14 @@ class Scheme(object):
             return cls(interface, name, configuration(cell, passkey, username))
 
 
-    def save(self):
+    def save(self): # TODO: Add Mac OS X Compatibility
         """
         Writes the configuration to the :attr:`interfaces` file.
         If WPA-EAP network, also write to /etc/wpa_supplicant_enterprise.conf
         """
+        if platform.system() == "Darwin":
+            raise Exception("Saving Wifi configuration is not yet supported on Mac OS X.")
+        
         assert not Scheme.find(self.interface, self.name)
         
         #Adapted from Ubuntu 802.1x Authentication page: https://help.ubuntu.com/community/Network802.1xAuthentication
@@ -151,15 +163,34 @@ class Scheme(object):
         """
         Connects to the network as configured in this scheme.
         """
-        if self.encryption_type == 'wpa2-eap':
-            response = subprocess.check_output(['wpa_supplicant', '-B', '-i', self.interface, '-Dwext', '-c', '/etc/wpa_supplicant_enterprise.conf'])
-            if ("Authentication succeeded" in response) or ("EAP authentication completed successfully" in response):
-                print 'Wi-Fi Connection established!'
+        if platform.system() == "Darwin":
+            net_ssid = ""
+            net_pass = ""
+            if "wireless-essid" in self.options.keys():
+                net_ssid = self.options['wireless-essid']
+            elif "wpa-ssid" in self.options.keys():
+                net_pass = self.options['password']
+                net_ssid = self.options['wpa-ssid']
             else:
-                print 'Could not connect to Wi-Fi network!'
+                net_pass = self.options['password']
+                net_ssid = self.options['ssid']
+        
+            response = ""
+            response = subprocess.check_output(['networksetup','-setairportnetwork','en0',net_ssid, net_pass])
+            if "Failed to join network" in response:
+                print("Could not connect to Wi-Fi network!")
+            else:
+                print("Wi-Fi Connection established!")
         else:
-            subprocess.check_call(['/sbin/ifdown', self.interface])
-            subprocess.check_call(['/sbin/ifup'] + self.as_args())
+            if self.encryption_type == 'wpa2-eap':
+                response = subprocess.check_output(['wpa_supplicant', '-B', '-i', self.interface, '-Dwext', '-c', '/etc/wpa_supplicant_enterprise.conf'])
+                if ("Authentication succeeded" in response) or ("EAP authentication completed successfully" in response):
+                    print('Wi-Fi Connection established!')
+                else:
+                    print('Could not connect to Wi-Fi network!')
+            else:
+                subprocess.check_call(['/sbin/ifdown', self.interface])
+                subprocess.check_call(['/sbin/ifup'] + self.as_args())
 
 
 # TODO: support other interfaces
