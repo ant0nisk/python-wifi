@@ -1,5 +1,6 @@
 import re
 import textwrap
+import platform
 
 import wifi.subprocess_compat as subprocess
 
@@ -21,9 +22,60 @@ class Cell(object):
         Returns a list of all cells extracted from the output of
         iwlist.
         """
-        iwlist_scan = subprocess.check_output(['/sbin/iwlist', interface, 'scan']).decode('utf-8')
+        cells = []
+        if platform.system() == "Darwin":
+            airport_scan = subprocess.check_output(['/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport', interface, 'scan']).decode('utf-8')
+            current_AP = subprocess.check_output(['/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport', '-I']).decode('utf-8')
+            addressRegex = re.compile(r'([\dA-F]{2}(?:[-:][\dA-F]{2}){5})',re.IGNORECASE)
+            currentAddress = addressRegex.findall(current_AP)[0]
+            for line in airport_scan.split("\n")[1:]:
+                if line.strip() == "":
+                    continue
+                ssid = line[:32].strip()
+                bssid = line[32:].strip().split(' ')[0].strip()
+                signal = int(line[32:].strip().split(" ")[1].strip())
+                channel = int(line[32:].strip().split(" ")[3].strip().split(",")[0])
+                security = line[32:].strip().split(" ")[-1]
+                encrypted = True
+                encryption_type = ""
+                if security == "NONE":
+                    encrypted = False
+                else:
+                    if "PSK" in security:
+                        encryption_type = "wpa2-psk"
+                    elif "WPA2" in security:
+                        encryption_type = "wpa2-?"
+                    elif "802.1x" in security:
+                        encryption_type = "wpa-eap"
+                    elif "WPA" in security:
+                        encryption_type = "wpa"
+                    elif "WEP" in security:
+                        encryption_type = "wep"
+                bitrate = 0
+                quality = 0
+                mode = ''
+                if bssid == currentAddress:
+                    bitrate = int(current_AP.split("lastTxRate: ")[1].split("\n")[0])
+                    quality = float(signal) / int(current_AP.split("agrCtlNoise: ")[1].split("\n")[0])
+                    mode = current_AP.split("op mode: ")[1].split("\n")[0].strip()
+                cellObject = Cell()
+                if encrypted:
+                    cellObject.encryption_type = encryption_type
+                cellObject.ssid = ssid
+                cellObject.signal = signal
+                cellObject.quality = quality
+                cellObject.frequency = 0
+                cellObject.bitrates = bitrate
+                cellObject.encrypted = encrypted
+                cellObject.channel = channel
+                cellObject.address = bssid
+                cellObject.mode = mode
+                
+                cells.append(cellObject)
+        else:
+            iwlist_scan = subprocess.check_output(['/sbin/iwlist', interface, 'scan']).decode('utf-8')
 
-        cells = map(normalize, cells_re.split(iwlist_scan)[1:])
+            cells = map(normalize, cells_re.split(iwlist_scan)[1:])
 
         return cells
 
