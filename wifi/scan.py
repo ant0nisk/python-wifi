@@ -27,7 +27,16 @@ class Cell(object):
             airport_scan = subprocess.check_output(['/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport', interface, 'scan']).decode('utf-8')
             current_AP = subprocess.check_output(['/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport', '-I']).decode('utf-8')
             addressRegex = re.compile(r'([\dA-F]{2}(?:[-:][\dA-F]{2}){5})',re.IGNORECASE)
-            currentAddress = addressRegex.findall(current_AP)[0]
+            currentAddress = addressRegex.findall(current_AP)
+            if currentAddress == []:
+                addressRegex = re.compile(r'([\dA-F]{1}(?:[-:][\dA-F]{2}){5})',re.IGNORECASE)
+                currentAddress = addressRegex.findall(current_AP)
+                if currentAddress == []:
+                    return []
+                else:
+                    currentAddress = currentAddress[0]
+            else:
+                currentAddress = currentAddress[0]
             for line in airport_scan.split("\n")[1:]:
                 if line.strip() == "":
                     continue
